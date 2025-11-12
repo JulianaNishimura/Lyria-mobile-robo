@@ -49,7 +49,6 @@ export default function App() {
         return;
       }
 
-      // Abre conexão com o backend
       ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
 
       ws.current.onopen = async () => {
@@ -64,7 +63,7 @@ export default function App() {
         console.log('🧠 Resposta de texto recebida:', respostaTexto);
 
         setStatusMsg(`IA: ${respostaTexto}`);
-        speakText(respostaTexto); // 🔊 Fala o texto com voz natural
+        speakText(respostaTexto); // 🔊 Fala o texto com voz alta em português
         setAppState('idle');
         ws.current.close();
       };
@@ -80,12 +79,27 @@ export default function App() {
 
   function speakText(text) {
     if ('speechSynthesis' in window) {
+      speechSynthesis.cancel(); // interrompe falas anteriores
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'pt-BR';
       utterance.pitch = 1.05;
       utterance.rate = 0.95;
-      utterance.volume = 1.0;
-      speechSynthesis.cancel(); // Interrompe falas anteriores
+      utterance.volume = 1.0; // máximo
+
+      // 🔍 Escolhe uma voz "Google português" (geralmente mais alta)
+      const voices = speechSynthesis.getVoices();
+      const vozPtBr =
+        voices.find((v) => v.name.toLowerCase().includes('google') && v.lang.startsWith('pt')) ||
+        voices.find((v) => v.lang.startsWith('pt')) ||
+        null;
+
+      if (vozPtBr) {
+        utterance.voice = vozPtBr;
+        console.log(`🎤 Usando voz: ${vozPtBr.name}`);
+      } else {
+        console.warn('⚠️ Nenhuma voz pt-BR encontrada, usando padrão.');
+      }
+
       speechSynthesis.speak(utterance);
     } else {
       console.error('Este navegador não suporta a síntese de voz.');
@@ -136,7 +150,6 @@ const styles = StyleSheet.create({
     borderRadius: 120,
     borderWidth: 10,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    backgroundColor: 'transparent',
   },
   micButton: {
     width: 200,

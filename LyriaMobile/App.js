@@ -51,7 +51,6 @@ export default function App() {
 
       // Abre conexão com o backend
       ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
-      ws.current.binaryType = 'arraybuffer'; // 👈 garante que o retorno seja áudio bruto
 
       ws.current.onopen = async () => {
         console.log('✅ WebSocket conectado.');
@@ -59,13 +58,17 @@ export default function App() {
         ws.current.send(arrayBuffer);
         console.log('🎤 Áudio enviado ao servidor.');
       };
+
       ws.current.onmessage = (event) => {
-        console.log('🧠 Resposta de texto recebida:', event.data);
-        setStatusMsg(`IA: ${event.data}`);
-        speakText(event.data); // 🔊 Fala o texto
+        const respostaTexto = event.data;
+        console.log('🧠 Resposta de texto recebida:', respostaTexto);
+
+        setStatusMsg(`IA: ${respostaTexto}`);
+        speakText(respostaTexto); // 🔊 Fala o texto com voz natural
         setAppState('idle');
         ws.current.close();
       };
+
       ws.current.onerror = (error) => {
         console.error('🚨 Erro no WebSocket:', error);
         alert('Erro ao enviar áudio para o servidor.');
@@ -73,6 +76,20 @@ export default function App() {
         setStatusMsg('Pressione para gravar');
       };
     };
+  }
+
+  function speakText(text) {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'pt-BR';
+      utterance.pitch = 1;
+      utterance.rate = 1;
+      utterance.volume = 1;
+      speechSynthesis.cancel(); // Interrompe falas anteriores
+      speechSynthesis.speak(utterance);
+    } else {
+      console.error('Este navegador não suporta a síntese de voz.');
+    }
   }
 
   function handleRecordButtonPress() {

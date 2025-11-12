@@ -1,163 +1,90 @@
 import React, { useState, useRef } from 'react';
-import { StyleSheet, View, Pressable, Text, Alert } from 'react-native';
+import { View, Pressable, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
-import { Audio } from 'expo-av';
-import { readAsStringAsync, writeAsStringAsync, cacheDirectory, deleteAsync } from 'expo-file-system/legacy';
 
 export default function App() {
-  const [recording, setRecording] = useState();
-  const [appState, setAppState] = useState('idle'); // 'idle' | 'recording' | 'processing'
+  const [appState, setAppState] = useState('idle');
+  const [statusMsg, setStatusMsg] = useState('Pressione para gravar');
   const ws = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunks = useRef([]);
 
-  /**
-   * Solicita permissão do microfone e inicia a gravação de áudio.
-   */
   async function startRecording() {
     try {
-      const permission = await Audio.requestPermissionsAsync();
-      if (permission.status === 'granted') {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-        });
-        setAppState('recording');
-        const { recording } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
-        setRecording(recording);
-      } else {
-        Alert.alert('Permissão necessária', 'A permissão do microfone é necessária para gravar áudio.');
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunks.current = [];
+      setAppState('recording');
+      setStatusMsg('🎙️ Gravando...');
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunks.current.push(event.data);
+      };
+
+      mediaRecorder.start();
     } catch (err) {
-      console.error('Falha ao iniciar a gravação', err);
+      console.error('Erro ao acessar microfone:', err);
+      alert('Não foi possível acessar o microfone.');
       setAppState('idle');
     }
   }
 
-  /**
-   * Para a gravação, envia o áudio via WebSocket e reproduz a resposta.
-   */
   async function stopRecording() {
-    if (!recording) return;
+    if (!mediaRecorderRef.current) return;
 
     setAppState('processing');
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-    setRecording(undefined);
+    setStatusMsg('⏳ Processando...');
+    mediaRecorderRef.current.stop();
 
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-    });
+    mediaRecorderRef.current.onstop = async () => {
+      const blob = new Blob(audioChunks.current, { type: 'audio/webm' });
+      console.log('🎧 Tamanho do áudio:', blob.size);
 
-    ws.current = new WebSocket("wss://lyria-servicodetranscricao.onrender.com/ws");
-    ws.current.binaryType = "blob";
+      if (blob.size === 0) {
+        alert('Nenhum áudio foi gravado.');
+        setAppState('idle');
+        setStatusMsg('Pressione para gravar');
+        return;
+      }
 
-    ws.current.onopen = async () => {
-      console.log('DIAGNÓSTICO: Conexão WebSocket aberta.');
-      try {
-        // Busca o arquivo de áudio como um Blob
-        const response = await fetch(uri);
-        const blob = await response.blob();
+      // Abre conexão com o backend (FastAPI no Render)
+      ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
 
-        console.log('DIAGNÓSTICO: Áudio lido como Blob, enviando...');
+      ws.current.onopen = () => {
+        console.log('✅ WebSocket conectado.');
         ws.current.send(blob);
-        console.log('DIAGNÓSTICO: Áudio enviado com sucesso.');
-      } catch (error) {
-        console.error('Falha ao ler ou enviar o arquivo de áudio', error);
-        Alert.alert('Erro', 'Não foi possível enviar o áudio.');
+        console.log('🎤 Áudio enviado ao servidor.');
+      };
+
+      ws.current.onmessage = (event) => {
+        console.log('🗣️ Resposta do servidor:', event.data);
+        setStatusMsg(`Transcrição: ${event.data}`);
         setAppState('idle');
-      }
-    };
+        ws.current.close();
+      };
 
-    ws.current.onmessage = async (e) => {
-      console.log('DIAGNÓSTICO: Mensagem recebida do servidor.');
-      try {
-        const reader = new FileReader();
-        reader.onload = async () => {
-          const base64Data = reader.result.split(',')[1];
-          const responseUri = `${cacheDirectory}response-${Date.now()}.mp3`;
-
-          await writeAsStringAsync(responseUri, base64Data, {
-              encoding: 'base64',
-          });
-
-          console.log('DIAGNÓSTICO: Resposta de áudio salva, tocando agora.');
-          const { sound } = await Audio.Sound.createAsync({ uri: responseUri });
-
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
-            setAppState('idle');
-            sound.unloadAsync();
-            deleteAsync(responseUri, { idempotent: true });
-          }
-        });
-
-        await sound.playAsync();
-        };
-
-        reader.onerror = (error) => {
-          console.error('Falha ao ler o Blob de áudio', error);
-          Alert.alert('Erro', 'Não foi possível processar a resposta de áudio.');
-          setAppState('idle');
-        };
-
-        reader.readAsDataURL(e.data);
-
-      } catch (error) {
-        console.error('Falha ao processar ou reproduzir a resposta', error);
-        Alert.alert('Erro', 'Não foi possível reproduzir a resposta do servidor.');
+      ws.current.onerror = (error) => {
+        console.error('🚨 Erro no WebSocket:', error);
+        alert('Erro ao enviar áudio para o servidor.');
         setAppState('idle');
-      }
-    };
-
-    ws.current.onerror = (e) => {
-      // Log do objeto de erro completo para diagnóstico
-      console.error('DIAGNÓSTICO: Objeto de erro do WebSocket:', JSON.stringify(e, null, 2));
-      Alert.alert('Erro de Conexão', `Não foi possível se conectar. Detalhes: ${e.message || 'Verifique os logs do console para mais informações.'}`);
-      setAppState('idle');
-    };
-
-    ws.current.onclose = (e) => {
-      console.log(`DIAGNÓSTICO: Conexão fechada. Código: ${e.code}, Motivo: ${e.reason}`);
-      if (appState === 'processing') {
-        Alert.alert('Conexão Encerrada', 'A conexão foi encerrada antes de receber uma resposta.');
-        setAppState('idle');
-      }
+        setStatusMsg('Pressione para gravar');
+      };
     };
   }
 
-  /**
-   * Alterna entre iniciar e parar a gravação.
-   */
   function handleRecordButtonPress() {
     if (appState === 'recording') {
       stopRecording();
-    } else {
+    } else if (appState === 'idle') {
       startRecording();
-    }
-  }
-
-  /**
-   * Retorna o texto de status com base no estado atual do aplicativo.
-   */
-  function getStatusText() {
-    switch (appState) {
-      case 'recording':
-        return 'Gravando...';
-      case 'processing':
-        return 'Processando...';
-      default:
-        return 'Pressione para gravar';
     }
   }
 
   return (
     <View style={styles.container}>
-      <LinearGradient
-        colors={['#1d294d', '#000000']}
-        style={styles.background}
-      />
+      <LinearGradient colors={['#1d294d', '#000000']} style={styles.background} />
       <View style={styles.micContainer}>
         <Pressable
           style={({ pressed }) => [
@@ -175,24 +102,14 @@ export default function App() {
           />
         </Pressable>
       </View>
-      <Text style={styles.statusText}>{getStatusText()}</Text>
+      <Text style={styles.statusText}>{statusMsg}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  background: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: '100%',
-  },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
   micContainer: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -211,24 +128,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 10,
-    },
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.5,
     shadowRadius: 13.16,
     elevation: 20,
   },
-  micButtonRecording: {
-    backgroundColor: '#5a2a2a',
-  },
-  micButtonPressed: {
-    backgroundColor: '#2c385a',
-  },
-  statusText: {
-    marginTop: 30,
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
+  micButtonRecording: { backgroundColor: '#5a2a2a' },
+  micButtonPressed: { backgroundColor: '#2c385a' },
+  statusText: { marginTop: 30, color: '#ffffff', fontSize: 18, fontWeight: 'bold', textAlign: 'center', paddingHorizontal: 20 },
 });

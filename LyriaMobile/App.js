@@ -49,20 +49,30 @@ export default function App() {
         return;
       }
 
-      // Abre conexão com o backend (FastAPI no Render)
+      // Abre conexão com o backend
       ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
+      ws.current.binaryType = 'arraybuffer'; // 👈 garante que o retorno seja áudio bruto
 
-      ws.current.onopen = () => {
+      ws.current.onopen = async () => {
         console.log('✅ WebSocket conectado.');
-        ws.current.send(blob);
+        const arrayBuffer = await blob.arrayBuffer();
+        ws.current.send(arrayBuffer);
         console.log('🎤 Áudio enviado ao servidor.');
       };
 
       ws.current.onmessage = (event) => {
-        console.log('🗣️ Resposta de texto recebida do servidor:', event.data);
-        setStatusMsg(`IA: ${event.data}`);
-        speakText(event.data);
+        console.log('🔊 Recebendo resposta do servidor...');
+
+        // O backend retorna áudio em bytes — criamos um blob pra tocar
+        const audioBlob = new Blob([event.data], { type: 'audio/mp3' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.play();
+
+        setStatusMsg('🎧 Resposta sendo reproduzida...');
         setAppState('idle');
+
+        // Fecha conexão depois
         ws.current.close();
       };
 
@@ -73,16 +83,6 @@ export default function App() {
         setStatusMsg('Pressione para gravar');
       };
     };
-  }
-
-  // 🗣️ Fala o texto recebido da IA usando a voz do navegador
-  function speakText(text) {
-    if (!text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'pt-BR';
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    window.speechSynthesis.speak(utterance);
   }
 
   function handleRecordButtonPress() {
@@ -146,5 +146,12 @@ const styles = StyleSheet.create({
   },
   micButtonRecording: { backgroundColor: '#5a2a2a' },
   micButtonPressed: { backgroundColor: '#2c385a' },
-  statusText: { marginTop: 30, color: '#ffffff', fontSize: 18, fontWeight: 'bold', textAlign: 'center', paddingHorizontal: 20 },
+  statusText: {
+    marginTop: 30,
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
 });

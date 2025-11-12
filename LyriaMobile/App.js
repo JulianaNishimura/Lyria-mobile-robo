@@ -59,8 +59,9 @@ export default function App() {
       };
 
       ws.current.onmessage = (event) => {
-        console.log('🗣️ Resposta do servidor:', event.data);
-        setStatusMsg(`Transcrição: ${event.data}`);
+        console.log('🗣️ Resposta de texto recebida do servidor:', event.data);
+        setStatusMsg(`IA: ${event.data}`);
+        speakText(event.data);
         setAppState('idle');
         ws.current.close();
       };
@@ -72,6 +73,16 @@ export default function App() {
         setStatusMsg('Pressione para gravar');
       };
     };
+  }
+
+  // 🗣️ Fala o texto recebido da IA usando a voz do navegador
+  function speakText(text) {
+    if (!text) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'pt-BR';
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    window.speechSynthesis.speak(utterance);
   }
 
   function handleRecordButtonPress() {

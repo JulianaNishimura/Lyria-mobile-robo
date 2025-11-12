@@ -59,23 +59,13 @@ export default function App() {
         ws.current.send(arrayBuffer);
         console.log('🎤 Áudio enviado ao servidor.');
       };
-
       ws.current.onmessage = (event) => {
-        console.log('🔊 Recebendo resposta do servidor...');
-
-        // O backend retorna áudio em bytes — criamos um blob pra tocar
-        const audioBlob = new Blob([event.data], { type: 'audio/mp3' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-        audio.play();
-
-        setStatusMsg('🎧 Resposta sendo reproduzida...');
+        console.log('🧠 Resposta de texto recebida:', event.data);
+        setStatusMsg(`IA: ${event.data}`);
+        speakText(event.data); // 🔊 Fala o texto
         setAppState('idle');
-
-        // Fecha conexão depois
         ws.current.close();
       };
-
       ws.current.onerror = (error) => {
         console.error('🚨 Erro no WebSocket:', error);
         alert('Erro ao enviar áudio para o servidor.');

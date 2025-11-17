@@ -1,211 +1,177 @@
 import React, { useState, useRef } from 'react';
+import { View, Pressable, Text, StyleSheet } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { FontAwesome } from '@expo/vector-icons';
 
 export default function App() {
-  const [status, setStatus] = useState('Segure para falar com a Lyria');
-  const [recording, setRecording] = useState(false);
-  const mediaRecorder = useRef(null);
-  const chunks = useRef([]);
+  const [appState, setAppState] = useState('idle');
+  const [statusMsg, setStatusMsg] = useState('Pressione para gravar');
   const ws = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunks = useRef([]);
 
-  const start = async () => {
+  async function startRecording() {
     try {
-      chunks.current = [];
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunks.current = [];
+      setAppState('recording');
+      setStatusMsg('🎙️ Gravando...');
 
-      const options = {};
-      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        options.mimeType = 'audio/webm;codecs=opus';
-      } else if (MediaRecorder.isTypeSupported('audio/wav')) {
-        options.mimeType = 'audio/wav';
-      }
-
-      const recorder = new MediaRecorder(stream, options);
-      mediaRecorder.current = recorder;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.current.push(e.data);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunks.current.push(event.data);
       };
 
-      recorder.start();
-      setRecording(true);
-      setStatus('Gravando... solte para enviar');
+      mediaRecorder.start();
     } catch (err) {
-      console.error('Erro no microfone:', err);
-      alert('Permita o acesso ao microfone');
-      setStatus('Erro no microfone');
+      console.error('Erro ao acessar microfone:', err);
+      alert('Não foi possível acessar o microfone.');
+      setAppState('idle');
     }
-  };
+  }
 
-  const stop = () => {
-    if (!mediaRecorder.current || !recording) return;
+  async function stopRecording() {
+    if (!mediaRecorderRef.current) return;
 
-    mediaRecorder.current.stop();
-    mediaRecorder.current.stream.getTracks().forEach(t => t.stop());
-    setRecording(false);
-    setStatus('Enviando para Lyria...');
+    setAppState('processing');
+    setStatusMsg('⏳ Processando...');
+    mediaRecorderRef.current.stop();
 
-    mediaRecorder.current.onstop = async () => {
-      const blob = new Blob(chunks.current, {
-        type: mediaRecorder.current.mimeType || 'audio/wav',
-      });
+    mediaRecorderRef.current.onstop = async () => {
+      const blob = new Blob(audioChunks.current, { type: 'audio/webm' });
+      console.log('🎧 Tamanho do áudio:', blob.size);
 
-      console.log('Audio blob size:', blob.size, 'type:', blob.type);
-
-      if (blob.size < 3000) {
-        setStatus('Áudio muito curto');
+      if (blob.size === 0) {
+        alert('Nenhum áudio foi gravado.');
+        setAppState('idle');
+        setStatusMsg('Pressione para gravar');
         return;
       }
 
-      try {
-        ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
+      ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
 
-        ws.current.onopen = () => {
-          console.log('WebSocket conectado, enviando áudio...');
-          ws.current.send(blob);
-        };
+      ws.current.onopen = async () => {
+        console.log('✅ WebSocket conectado.');
+        const arrayBuffer = await blob.arrayBuffer();
+        ws.current.send(arrayBuffer);
+        console.log('🎤 Áudio enviado ao servidor.');
+      };
 
-        ws.current.onmessage = async (e) => {
-          console.log('Resposta recebida, tamanho:', e.data.size);
-          try {
-            // Converter Blob para ArrayBuffer se necessário
-            const audioBlob = e.data instanceof Blob ? e.data : new Blob([e.data], { type: 'audio/mp3' });
-            console.log('Audio blob criado:', audioBlob.size, 'bytes');
-            
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audioElement = new Audio(audioUrl);
-            
-            audioElement.play().then(() => {
-              console.log('Reproduzindo resposta');
-              setStatus('Lyria respondeu! Segure para falar novamente');
-            }).catch(err => {
-              console.error('Erro ao reproduzir:', err);
-              setStatus('Erro ao reproduzir resposta');
-            });
+      ws.current.onmessage = (event) => {
+        const respostaTexto = event.data;
+        console.log('🧠 Resposta de texto recebida:', respostaTexto);
 
-            audioElement.onended = () => {
-              URL.revokeObjectURL(audioUrl);
-              console.log('Reprodução finalizada');
-            };
-          } catch (err) {
-            console.error('Erro ao processar resposta:', err);
-            setStatus('Erro ao processar resposta');
-          }
-        };
+        setStatusMsg(`IA: ${respostaTexto}`);
+        speakText(respostaTexto); // 🔊 Fala o texto com voz alta em português
+        setAppState('idle');
+        ws.current.close();
+      };
 
-        ws.current.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          alert('Sem conexão com o servidor');
-          setStatus('Erro de rede');
-        };
-
-        ws.current.onclose = () => {
-          console.log('WebSocket fechado');
-          if (status === 'Enviando para Lyria...') {
-            setStatus('Conexão fechada antes da resposta');
-          }
-        };
-      } catch (err) {
-        console.error('Erro ao conectar:', err);
-        setStatus('Erro de conexão');
-      }
+      ws.current.onerror = (error) => {
+        console.error('🚨 Erro no WebSocket:', error);
+        alert('Erro ao enviar áudio para o servidor.');
+        setAppState('idle');
+        setStatusMsg('Pressione para gravar');
+      };
     };
-  };
+  }
+
+  function speakText(text) {
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel(); // interrompe falas anteriores
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'pt-BR';
+      utterance.pitch = 1.05;
+      utterance.rate = 0.95;
+      utterance.volume = 1.0; // máximo
+
+      // 🔍 Escolhe uma voz "Google português" (geralmente mais alta)
+      const voices = speechSynthesis.getVoices();
+      const vozPtBr =
+        voices.find((v) => v.name.toLowerCase().includes('google') && v.lang.startsWith('pt')) ||
+        voices.find((v) => v.lang.startsWith('pt')) ||
+        null;
+
+      if (vozPtBr) {
+        utterance.voice = vozPtBr;
+        console.log(`🎤 Usando voz: ${vozPtBr.name}`);
+      } else {
+        console.warn('⚠️ Nenhuma voz pt-BR encontrada, usando padrão.');
+      }
+
+      speechSynthesis.speak(utterance);
+    } else {
+      console.error('Este navegador não suporta a síntese de voz.');
+    }
+  }
+
+  function handleRecordButtonPress() {
+    if (appState === 'recording') {
+      stopRecording();
+    } else if (appState === 'idle') {
+      startRecording();
+    }
+  }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.background} />
-
-      <h1 style={styles.title}>Lyria</h1>
-
-      <button
-        onMouseDown={start}
-        onMouseUp={stop}
-        onTouchStart={start}
-        onTouchEnd={stop}
-        style={{
-          ...styles.button,
-          ...(recording ? styles.recording : {}),
-        }}
-      >
-        <svg 
-          width="110" 
-          height="110" 
-          viewBox="0 0 24 24" 
-          fill="white"
+    <View style={styles.container}>
+      <LinearGradient colors={['#1d294d', '#000000']} style={styles.background} />
+      <View style={styles.micContainer}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.micButton,
+            appState === 'recording' && styles.micButtonRecording,
+            pressed && styles.micButtonPressed,
+          ]}
+          onPress={handleRecordButtonPress}
+          disabled={appState === 'processing'}
         >
-          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-        </svg>
-        {recording && <div style={styles.pulse} />}
-      </button>
-
-      <p style={styles.status}>{status}</p>
-    </div>
+          <FontAwesome
+            name="microphone"
+            size={100}
+            color={appState === 'recording' ? '#ff4747' : '#ffffff'}
+          />
+        </Pressable>
+      </View>
+      <Text style={styles.statusText}>{statusMsg}</Text>
+    </View>
   );
 }
 
-const styles = {
-  container: {
-    position: 'relative',
-    width: '100vw',
-    height: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  background: { position: 'absolute', left: 0, right: 0, top: 0, height: '100%' },
+  micContainer: {
     alignItems: 'center',
-    overflow: 'hidden',
+    justifyContent: 'center',
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    borderWidth: 10,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  background: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)',
-    zIndex: -1,
+  micButton: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#3b4a74',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 13.16,
+    elevation: 20,
   },
-  title: {
-    color: '#fff',
-    fontSize: '48px',
+  micButtonRecording: { backgroundColor: '#5a2a2a' },
+  micButtonPressed: { backgroundColor: '#2c385a' },
+  statusText: {
+    marginTop: 30,
+    color: '#ffffff',
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: '100px',
-    fontFamily: 'system-ui, -apple-system, sans-serif',
-  },
-  button: {
-    position: 'relative',
-    width: '220px',
-    height: '220px',
-    borderRadius: '110px',
-    backgroundColor: '#6a11cb',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    border: 'none',
-    cursor: 'pointer',
-    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.8)',
-    transition: 'all 0.3s ease',
-  },
-  recording: {
-    backgroundColor: '#ff0044',
-    transform: 'scale(1.15)',
-  },
-  pulse: {
-    position: 'absolute',
-    width: '260px',
-    height: '260px',
-    borderRadius: '130px',
-    border: '10px solid #ff0044',
-    opacity: 0.5,
-    animation: 'pulse 1.5s infinite',
-  },
-  status: {
-    marginTop: '70px',
-    color: '#fff',
-    fontSize: '20px',
     textAlign: 'center',
-    padding: '0 40px',
-    fontWeight: '600',
-    maxWidth: '600px',
-    fontFamily: 'system-ui, -apple-system, sans-serif',
+    paddingHorizontal: 20,
   },
-};
+});

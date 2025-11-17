@@ -64,11 +64,14 @@ export default function App() {
           ws.current.send(blob);
         };
 
-        ws.current.onmessage = (e) => {
-          console.log('Resposta recebida');
+        ws.current.onmessage = async (e) => {
+          console.log('Resposta recebida, tamanho:', e.data.size);
           try {
-            const audio = new Blob([e.data], { type: 'audio/mp3' });
-            const audioUrl = URL.createObjectURL(audio);
+            // Converter Blob para ArrayBuffer se necessário
+            const audioBlob = e.data instanceof Blob ? e.data : new Blob([e.data], { type: 'audio/mp3' });
+            console.log('Audio blob criado:', audioBlob.size, 'bytes');
+            
+            const audioUrl = URL.createObjectURL(audioBlob);
             const audioElement = new Audio(audioUrl);
             
             audioElement.play().then(() => {
@@ -81,12 +84,12 @@ export default function App() {
 
             audioElement.onended = () => {
               URL.revokeObjectURL(audioUrl);
+              console.log('Reprodução finalizada');
             };
           } catch (err) {
             console.error('Erro ao processar resposta:', err);
             setStatus('Erro ao processar resposta');
           }
-          ws.current?.close();
         };
 
         ws.current.onerror = (error) => {
@@ -97,6 +100,9 @@ export default function App() {
 
         ws.current.onclose = () => {
           console.log('WebSocket fechado');
+          if (status === 'Enviando para Lyria...') {
+            setStatus('Conexão fechada antes da resposta');
+          }
         };
       } catch (err) {
         console.error('Erro ao conectar:', err);

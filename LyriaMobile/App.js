@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { View, Pressable, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FontAwesome } from '@expo/vector-icons';
+import * as Speech from 'expo-speech';
 
 export default function App() {
   const [appState, setAppState] = useState('idle');
@@ -16,6 +17,7 @@ export default function App() {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunks.current = [];
+
       setAppState('recording');
       setStatusMsg('🎙️ Gravando...');
 
@@ -40,7 +42,6 @@ export default function App() {
 
     mediaRecorderRef.current.onstop = async () => {
       const blob = new Blob(audioChunks.current, { type: 'audio/webm' });
-      console.log('🎧 Tamanho do áudio:', blob.size);
 
       if (blob.size === 0) {
         alert('Nenhum áudio foi gravado.');
@@ -52,58 +53,31 @@ export default function App() {
       ws.current = new WebSocket('wss://lyria-servicodetranscricao.onrender.com/ws');
 
       ws.current.onopen = async () => {
-        console.log('✅ WebSocket conectado.');
         const arrayBuffer = await blob.arrayBuffer();
         ws.current.send(arrayBuffer);
-        console.log('🎤 Áudio enviado ao servidor.');
       };
 
       ws.current.onmessage = (event) => {
         const respostaTexto = event.data;
-        console.log('🧠 Resposta de texto recebida:', respostaTexto);
 
         setStatusMsg(`IA: ${respostaTexto}`);
-        speakText(respostaTexto); // 🔊 Fala o texto com voz alta em português
+        Speech.speak(respostaTexto, {
+          language: 'pt-BR',
+          pitch: 1.05,
+          rate: 0.95,
+        });
+
         setAppState('idle');
         ws.current.close();
       };
 
       ws.current.onerror = (error) => {
-        console.error('🚨 Erro no WebSocket:', error);
+        console.error('Erro no WebSocket:', error);
         alert('Erro ao enviar áudio para o servidor.');
         setAppState('idle');
         setStatusMsg('Pressione para gravar');
       };
     };
-  }
-
-  function speakText(text) {
-    if ('speechSynthesis' in window) {
-      speechSynthesis.cancel(); // interrompe falas anteriores
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'pt-BR';
-      utterance.pitch = 1.05;
-      utterance.rate = 0.95;
-      utterance.volume = 1.0; // máximo
-
-      // 🔍 Escolhe uma voz "Google português" (geralmente mais alta)
-      const voices = speechSynthesis.getVoices();
-      const vozPtBr =
-        voices.find((v) => v.name.toLowerCase().includes('google') && v.lang.startsWith('pt')) ||
-        voices.find((v) => v.lang.startsWith('pt')) ||
-        null;
-
-      if (vozPtBr) {
-        utterance.voice = vozPtBr;
-        console.log(`🎤 Usando voz: ${vozPtBr.name}`);
-      } else {
-        console.warn('⚠️ Nenhuma voz pt-BR encontrada, usando padrão.');
-      }
-
-      speechSynthesis.speak(utterance);
-    } else {
-      console.error('Este navegador não suporta a síntese de voz.');
-    }
   }
 
   function handleRecordButtonPress() {
@@ -158,10 +132,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#3b4a74',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 13.16,
     elevation: 20,
   },
   micButtonRecording: { backgroundColor: '#5a2a2a' },
